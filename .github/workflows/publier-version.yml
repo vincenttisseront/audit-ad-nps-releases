@@ -1,0 +1,46 @@
+# Publie une version à partir d'une branche « publication/vX.Y.Z » poussée par l'outil de publication.
+# La branche contient l'archive découpée en parties (< 50 Mo), son empreinte SHA-256 et les notes.
+# L'archive est réassemblée, son SHA-256 vérifié, puis la version GitHub est créée et la branche supprimée.
+name: Publier une version
+
+on:
+  push:
+    branches: ['publication/**']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Contrôler que la publication est complète
+        id: etat
+        run: |
+          if [ -f publication/PRET ]; then echo "pret=oui" >> "$GITHUB_OUTPUT"; else echo "Parties en cours d'envoi : rien à faire."; echo "pret=non" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Réassembler, vérifier et publier
+        if: steps.etat.outputs.pret == 'oui'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < publication/version.txt)"
+          nom="AuditAdNps-win-x64-v${version}"
+          mkdir -p sortie
+          cat publication/${nom}.zip.part* > "sortie/${nom}.zip"
+          cp "publication/${nom}.zip.sha256" sortie/
+          (cd sortie && sha256sum -c "${nom}.zip.sha256")
+          gh release create "v${version}" "sortie/${nom}.zip" "sortie/${nom}.zip.sha256" \
+            --repo "${GITHUB_REPOSITORY}" --title "Audit AD NPS v${version}" \
+            --notes-file publication/notes.md --target main
+
+      - name: Supprimer la branche de publication
+        if: steps.etat.outputs.pret == 'oui'
+        run: git push origin --delete "${GITHUB_REF_NAME}"
